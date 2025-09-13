@@ -1,0 +1,95 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Define the Runge function
+def runge_function(x):
+    return 1 / (1 + 25 * x**2)
+
+# Generate training and validation data
+x_train = np.linspace(-1, 1, 200).reshape(-1, 1)
+y_train = runge_function(x_train)
+
+x_val = np.linspace(-1, 1, 100).reshape(-1, 1)
+y_val = runge_function(x_val)
+
+x_train_tensor = torch.tensor(x_train, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+x_val_tensor = torch.tensor(x_val, dtype=torch.float32)
+y_val_tensor = torch.tensor(y_val, dtype=torch.float32)
+
+# Define a simple feedforward neural network
+class RungeNet(nn.Module):
+    def __init__(self):
+        super(RungeNet, self).__init__()
+        self.model = nn.Sequential(
+            nn.Linear(1, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1)
+        )
+
+    def forward(self, x):
+        return self.model(x)
+
+# Initialize network, loss, optimizer
+net = RungeNet()
+criterion = nn.MSELoss()
+optimizer = optim.Adam(net.parameters(), lr=0.01)
+
+# Training loop
+train_losses = []
+val_losses = []
+
+for epoch in range(2000):
+    optimizer.zero_grad()
+    output = net(x_train_tensor)
+    loss = criterion(output, y_train_tensor)
+    loss.backward()
+    optimizer.step()
+
+    # Validation loss
+    with torch.no_grad():
+        val_output = net(x_val_tensor)
+        val_loss = criterion(val_output, y_val_tensor)
+
+    train_losses.append(loss.item())
+    val_losses.append(val_loss.item())
+
+    if epoch % 200 == 0:
+        print(f"Epoch {epoch}, Train Loss: {loss.item():.6f}, Val Loss: {val_loss.item():.6f}")
+
+# Evaluate network
+x_test = np.linspace(-1, 1, 500).reshape(-1, 1)
+y_test = runge_function(x_test)
+
+x_test_tensor = torch.tensor(x_test, dtype=torch.float32)
+y_pred = net(x_test_tensor).detach().numpy()
+
+# Compute errors
+mse = np.mean((y_pred - y_test)**2)
+max_error = np.max(np.abs(y_pred - y_test))
+print(f"Final Test MSE: {mse:.6e}")
+print(f"Final Test Max Error: {max_error:.6e}")
+
+# Plot results
+plt.figure(figsize=(8,5))
+plt.plot(x_test, y_test, label="Runge Function", color="blue")
+plt.plot(x_test, y_pred, label="Neural Net Approximation", color="red", linestyle="--")
+plt.scatter(x_train, y_train, s=10, color="black", alpha=0.3, label="Training points")
+plt.legend()
+plt.title("Neural Network Approximation of Runge Function")
+plt.show()
+
+# Plot training and validation loss curves
+plt.figure(figsize=(8,5))
+plt.plot(train_losses, label="Training Loss")
+plt.plot(val_losses, label="Validation Loss")
+plt.xlabel("Epoch")
+plt.ylabel("MSE Loss")
+plt.title("Training and Validation Loss Curves")
+plt.legend()
+plt.show()
