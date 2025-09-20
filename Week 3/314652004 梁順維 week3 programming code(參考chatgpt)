@@ -1,0 +1,169 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import matplotlib.pyplot as plt
+import numpy as np
+
+# -----------------------------
+# Define the Runge function and its derivative
+# -----------------------------
+def runge_function(x):
+    return 1 / (1 + 25 * x**2)
+
+def runge_derivative(x):
+    return -50 * x / (1 + 25 * x**2)**2
+
+# -----------------------------
+# Generate training and validation data
+# -----------------------------
+x_train = np.linspace(-1, 1, 200).reshape(-1, 1)
+y_train = runge_function(x_train)
+y_train_deriv = runge_derivative(x_train)
+
+x_val = np.linspace(-1, 1, 100).reshape(-1, 1)
+y_val = runge_function(x_val)
+y_val_deriv = runge_derivative(x_val)
+
+x_train_tensor = torch.tensor(x_train, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+y_train_deriv_tensor = torch.tensor(y_train_deriv, dtype=torch.float32)
+
+x_val_tensor = torch.tensor(x_val, dtype=torch.float32)
+y_val_tensor = torch.tensor(y_val, dtype=torch.float32)
+y_val_deriv_tensor = torch.tensor(y_val_deriv, dtype=torch.float32)
+
+# -----------------------------
+# Define Neural Network
+# -----------------------------
+class RungeNet(nn.Module):
+    def __init__(self):
+        super(RungeNet, self).__init__()
+        self.model = nn.Sequential(
+            nn.Linear(1, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1)
+        )
+
+    def forward(self, x):
+        return self.model(x)
+
+# -----------------------------
+# Initialize network and optimizer
+# -----------------------------
+net = RungeNet()
+optimizer = optim.Adam(net.parameters(), lr=0.01)
+mse_loss = nn.MSELoss()
+
+# -----------------------------
+# Define combined loss
+# -----------------------------
+def combined_loss(x, y_true, y_true_deriv):
+    # 確保 x 需要梯度
+    x = x.clone().detach().requires_grad_(True)
+
+    # Forward pass
+    y_hat = net(x)
+
+    # Compute derivative using autograd
+    dydx = torch.autograd.grad(outputs=y_hat, inputs=x,
+                               grad_outputs=torch.ones_like(y_hat),
+                               create_graph=True)[0]
+
+    # Function loss
+    loss_func = mse_loss(y_hat, y_true)
+    # Derivative loss
+    loss_deriv = mse_loss(dydx, y_true_deriv)
+
+    return loss_func + loss_deriv, loss_func.item(), loss_deriv.item()
+
+# -----------------------------
+# Training loop
+# -----------------------------
+train_losses, val_losses = [], []
+train_func_losses, train_deriv_losses = [], []
+
+for epoch in range(2000):
+    optimizer.zero_grad()
+    loss, lf, ld = combined_loss(x_train_tensor, y_train_tensor, y_train_deriv_tensor)
+    loss.backward()
+    optimizer.step()
+
+    # validation 不要用 no_grad()，否則梯度會被關掉
+    val_loss, vlf, vld = combined_loss(x_val_tensor, y_val_tensor, y_val_deriv_tensor)
+
+    train_losses.append(loss.item())
+    val_losses.append(val_loss.item())
+    train_func_losses.append(lf)
+    train_deriv_losses.append(ld)
+
+    if epoch % 200 == 0:
+        print(f"Epoch {epoch}, Train Total Loss: {loss.item():.6f}, "
+              f"Func Loss: {lf:.6f}, Deriv Loss: {ld:.6f}, "
+              f"Val Loss: {val_loss.item():.6f}")
+
+# -----------------------------
+# Evaluate network on test set
+# -----------------------------
+x_test = np.linspace(-1, 1, 500).reshape(-1, 1)
+y_test = runge_function(x_test)
+y_test_deriv = runge_derivative(x_test)
+
+x_test_tensor = torch.tensor(x_test, dtype=torch.float32, requires_grad=True)
+y_pred = net(x_test_tensor)
+y_pred_np = y_pred.detach().numpy()
+
+# Predicted derivative
+y_pred_deriv = torch.autograd.grad(outputs=y_pred, inputs=x_test_tensor,
+                                   grad_outputs=torch.ones_like(y_pred),
+                                   create_graph=True)[0].detach().numpy()
+
+# Compute errors
+mse_func = np.mean((y_pred_np - y_test)**2)
+max_error_func = np.max(np.abs(y_pred_np - y_test))
+
+mse_deriv = np.mean((y_pred_deriv - y_test_deriv)**2)
+max_error_deriv = np.max(np.abs(y_pred_deriv - y_test_deriv))
+
+print(f"Function Approximation -> MSE: {mse_func:.6e}, Max Error: {max_error_func:.6e}")
+print(f"Derivative Approximation -> MSE: {mse_deriv:.6e}, Max Error: {max_error_deriv:.6e}")
+
+# -----------------------------
+# Plots
+# -----------------------------
+# Function approximation
+plt.figure(figsize=(8,5))
+plt.plot(x_test, y_test, label="True f(x)", color="blue")
+plt.plot(x_test, y_pred_np, label="NN Approx f(x)", color="red", linestyle="--")
+plt.legend()
+plt.title("Function Approximation")
+plt.show()
+
+# Derivative approximation
+plt.figure(figsize=(8,5))
+plt.plot(x_test, y_test_deriv, label="True f'(x)", color="green")
+plt.plot(x_test, y_pred_deriv, label="NN Approx f'(x)", color="orange", linestyle="--")
+plt.legend()
+plt.title("Derivative Approximation")
+plt.show()
+
+# Training and validation loss curves
+plt.figure(figsize=(8,5))
+plt.plot(train_losses, label="Train Total Loss")
+plt.plot(val_losses, label="Validation Total Loss")
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.title("Training and Validation Loss Curves")
+plt.legend()
+plt.show()
+
+# Function vs derivative loss breakdown
+plt.figure(figsize=(8,5))
+plt.plot(train_func_losses, label="Train Function Loss")
+plt.plot(train_deriv_losses, label="Train Derivative Loss")
+plt.xlabel("Epoch")
+plt.ylabel("MSE Loss")
+plt.title("Function vs Derivative Loss during Training")
+plt.legend()
+plt.show()
