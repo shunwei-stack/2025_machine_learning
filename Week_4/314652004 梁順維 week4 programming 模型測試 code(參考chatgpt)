@@ -1,0 +1,11 @@
+import joblib
+
+# 載入模型
+clf = joblib.load("classification_model.pkl")
+reg = joblib.load("regression_model.pkl")
+
+# 測試分類模型
+print(clf.predict([[121, 24]]))   # 輸出 [0] 或 [1]
+
+# 測試回歸模型
+print(reg.predict([[121, 24]]))   # 輸出預測溫度 (例如 27.3)
