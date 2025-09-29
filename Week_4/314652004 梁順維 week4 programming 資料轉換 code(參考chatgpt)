@@ -1,0 +1,53 @@
+import xml.etree.ElementTree as ET
+import pandas as pd
+import re
+
+# 讀取 XML 檔案
+xml_file = "O-A0038-003.xml"
+tree = ET.parse(xml_file)
+root = tree.getroot()
+
+# 命名空間
+ns = {"cwa": "urn:cwa:gov:tw:cwacommon:0.1"}
+
+# 取出 Content 區塊
+content_text = root.find(".//cwa:Content", ns).text.strip()
+
+# 修正換行造成的數值黏在一起問題
+content_fixed = re.sub(r'([0-9])(-)', r'\1,\2', content_text.replace("\n", ""))
+
+# 轉換為浮點數
+values = [float(v) for v in content_fixed.split(",") if v.strip() != ""]
+
+# 格點設定
+n_lon, n_lat = 67, 120
+lon0, lat0 = 120.0, 21.88
+d = 0.03
+
+classification_data = []
+regression_data = []
+
+# 產生資料集
+for j in range(n_lat):
+    for i in range(n_lon):
+        lon = lon0 + i * d
+        lat = lat0 + j * d
+        val = values[j * n_lon + i]
+
+        # 分類資料集
+        label = 0 if val == -999.0 else 1
+        classification_data.append((lon, lat, label))
+
+        # 回歸資料集
+        if val != -999.0:
+            regression_data.append((lon, lat, val))
+
+# 轉成 DataFrame
+df_class = pd.DataFrame(classification_data, columns=["Longitude", "Latitude", "Label"])
+df_reg = pd.DataFrame(regression_data, columns=["Longitude", "Latitude", "Value"])
+
+# 輸出檔案
+df_class.to_csv("classification_dataset.csv", index=False)
+df_reg.to_csv("regression_dataset.csv", index=False)
+
+print("輸出完成：classification_dataset.csv, regression_dataset.csv")
