@@ -1,0 +1,45 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import r2_score, mean_squared_error
+import platform
+
+# 自動設定中文字型
+def set_chinese_font():
+    system = platform.system()
+    if system == "Windows":
+        plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei"]
+    elif system == "Darwin":  # macOS
+        plt.rcParams["font.sans-serif"] = ["PingFang TC"]
+    else:  # Linux
+        plt.rcParams["font.sans-serif"] = ["Noto Sans CJK TC"]
+    plt.rcParams["axes.unicode_minus"] = False
+
+set_chinese_font()
+
+# 載入回歸資料
+df_reg = pd.read_csv("regression_dataset.csv")
+X = df_reg[["Longitude", "Latitude"]]
+y = df_reg["Value"]
+
+# 訓練/測試集
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+reg = RandomForestRegressor(n_estimators=100, random_state=42)
+reg.fit(X_train, y_train)
+
+# 預測
+y_pred = reg.predict(X_test)
+
+# 評估
+r2 = r2_score(y_test, y_pred)
+mse = mean_squared_error(y_test, y_pred)
+
+# 繪製散點圖
+plt.figure(figsize=(6,6))
+plt.scatter(y_test, y_pred, alpha=0.4, edgecolors="k")
+plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
+plt.xlabel("實際值 (True Temperature)")
+plt.ylabel("預測值 (Predicted Temperature)")
+plt.title(f"回歸模型散點圖 (R²={r2:.3f}, MSE={mse:.3f})", fontsize=14, pad=15)
+plt.show()
