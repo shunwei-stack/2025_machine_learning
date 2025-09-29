@@ -1,0 +1,33 @@
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import accuracy_score, classification_report, mean_squared_error, r2_score
+import joblib
+
+# 載入前一步產生的資料
+df_class = pd.read_csv("classification_dataset.csv")
+df_reg = pd.read_csv("regression_dataset.csv")
+
+# -----------------------------
+# (A) 分類模型
+# -----------------------------
+X_class = df_class[["Longitude", "Latitude"]]
+y_class = df_class["Label"]
+
+X_train, X_test, y_train, y_test = train_test_split(X_class, y_class, test_size=0.2, random_state=42)
+
+# 使用隨機森林分類器 (效果比 logistic regression 通常好一些)
+clf = RandomForestClassifier(n_estimators=100, random_state=42)
+clf.fit(X_train, y_train)
+
+y_pred_class = clf.predict(X_test)
+
+print("分類模型準確率:", accuracy_score(y_test, y_pred_class))
+print("分類模型報告:\n", classification_report(y_test, y_pred_class))
+
+# -----------------------------
+# (B) 回歸模型
+# -----------------------------
+X_reg = df_reg[["Longitude", "Latitude"]]
+y_reg = df_reg["Value"]
