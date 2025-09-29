@@ -1,0 +1,49 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import platform
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score, classification_report
+
+# ✅ 自動設定中文字型
+def set_chinese_font():
+    system = platform.system()
+    if system == "Windows":
+        plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei"]  # 微軟正黑體
+    elif system == "Darwin":  # macOS
+        plt.rcParams["font.sans-serif"] = ["PingFang TC"]
+    else:  # Linux
+        plt.rcParams["font.sans-serif"] = ["Noto Sans CJK TC"]
+    plt.rcParams["axes.unicode_minus"] = False
+
+set_chinese_font()
+
+# 讀取分類資料
+df_class = pd.read_csv("classification_dataset.csv")
+X = df_class[["Longitude", "Latitude"]]
+y = df_class["Label"]
+
+# 訓練/測試集
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# 建立並訓練分類模型
+clf = RandomForestClassifier(n_estimators=100, random_state=42)
+clf.fit(X_train, y_train)
+
+# 預測
+y_pred = clf.predict(X_test)
+
+# 分類報告
+print("分類模型準確率:", accuracy_score(y_test, y_pred))
+print("分類模型報告:\n", classification_report(y_test, y_pred))
+
+# ✅ 繪製混淆矩陣（乾淨版）
+cm = confusion_matrix(y_test, y_pred)
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0,1])
+disp.plot(cmap="Blues", colorbar=False)
+
+# 中文標題與標籤
+plt.title("分類模型 混淆矩陣 (測試集)", fontsize=14, pad=15)
+plt.xlabel("預測標籤")
+plt.ylabel("真實標籤")
+plt.show()
