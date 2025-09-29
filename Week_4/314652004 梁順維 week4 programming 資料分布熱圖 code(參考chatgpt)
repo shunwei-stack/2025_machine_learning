@@ -1,0 +1,40 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import platform
+
+# ✅ 自動設定中文字型
+def set_chinese_font():
+    system = platform.system()
+    if system == "Windows":
+        plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei"]  # 微軟正黑體
+    elif system == "Darwin":  # macOS
+        plt.rcParams["font.sans-serif"] = ["PingFang TC"]
+    else:  # Linux
+        plt.rcParams["font.sans-serif"] = ["Noto Sans CJK TC"]
+    plt.rcParams["axes.unicode_minus"] = False
+
+set_chinese_font()
+
+# 讀取資料
+df_class = pd.read_csv("classification_dataset.csv")
+df_reg = pd.read_csv("regression_dataset.csv")
+
+# (A) 有效值分布 (分類標籤)
+plt.figure(figsize=(6,6))
+plt.scatter(df_class["Longitude"], df_class["Latitude"],
+            c=df_class["Label"], cmap="coolwarm", s=5)
+plt.colorbar(label="標籤 (0=無效, 1=有效)")
+plt.title("有效值分布 (Classification)", fontsize=14, pad=15)
+plt.xlabel("經度")
+plt.ylabel("緯度")
+plt.show()
+
+# (B) 溫度分布 (回歸數值)
+plt.figure(figsize=(6,6))
+plt.scatter(df_reg["Longitude"], df_reg["Latitude"],
+            c=df_reg["Value"], cmap="turbo", s=5)
+plt.colorbar(label="溫度 (°C)")
+plt.title("溫度分布 (Regression)", fontsize=14, pad=15)
+plt.xlabel("經度")
+plt.ylabel("緯度")
+plt.show()
