@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""
+qda_interactive.py
+
+功能：
+- 讀取 ./classification_dataset.csv
+- 使用前兩欄 (經度, 緯度) 訓練 QDA（自實作）
+- 顯示測試表現
+- 儲存模型 (qda_model.pkl)
+- 進入互動命令列，輸入 "lon lat" 會回傳預測類別與 P(y=1)
+
+執行：
+    python qda_interactive.py
+"""
+
+import sys
+import numpy as np
+import pandas as pd
+import pickle
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+
+DATA_PATH = "./classification_dataset.csv"
+MODEL_PATH = "./qda_model.pkl"
+TEST_SIZE = 0.2
+RANDOM_STATE = 42
+
+# ---------------- QDA Implementation ----------------
+def train_qda(X, y):
+    """
+    Estimate per-class prior phi, mean mu, covariance sigma, and pseudo-inverse.
+    X: (n, d), y: (n,)
+    Return: params dict with keys 0 and 1.
+    """
+    n, d = X.shape
+    params = {}
+    classes = np.unique(y)
+    for c in classes:
+        Xc = X[y == c]
+        n_c = Xc.shape[0]
+        phi = n_c / n
+        mu = Xc.mean(axis=0)
+        # MLE covariance (divide by n_c)
+        sigma = np.zeros((d,d))
+        for i in range(n_c):
+            diff = (Xc[i] - mu).reshape(-1,1)
+            sigma += diff.dot(diff.T)
+        sigma /= n_c
+        # inverse (use pinv if singular)
+        try:
+            inv_sigma = np.linalg.inv(sigma)
+        except np.linalg.LinAlgError:
+            inv_sigma = np.linalg.pinv(sigma)
+        params[int(c)] = {
+            'phi': float(phi),
+            'mu': mu,
+            'sigma': sigma,
+            'inv_sigma': inv_sigma
+        }
+    return params
+
+def predict_qda_params(params, X):
+    """
+    Predict using params returned by train_qda.
+    X: (m, d)
+    Returns: preds (m,), prob1 (m,) where prob1 = P(y=1|x)
+    """
+    X = np.atleast_2d(X)
+    m, d = X.shape
+    classes = sorted(list(params.keys()))
+    K = len(classes)
+    scores = np.zeros((m, K))
+    for idx, c in enumerate(classes):
+        phi = params[c]['phi']
+        mu = params[c]['mu']
+        sigma = params[c]['sigma']
+        inv_sigma = params[c]['inv_sigma']
+        # compute robust logdet
+        sign, logdet = np.linalg.slogdet(sigma)
+        if sign <= 0:
+            eig = np.linalg.eigvalsh(sigma)
+            eig_clipped = np.clip(eig, 1e-12, None)
+            logdet = float(np.sum(np.log(eig_clipped)))
+        diffs = X - mu  # (m, d)
+        quad = np.sum((diffs.dot(inv_sigma)) * diffs, axis=1)  # (m,)
+        scores[:, idx] = -0.5 * quad - 0.5 * logdet + np.log(phi)
+    # stable softmax => probabilities
+    maxs = np.max(scores, axis=1, keepdims=True)
+    exps = np.exp(scores - maxs)
+    probs = exps / np.sum(exps, axis=1, keepdims=True)  # shape (m,K)
+    preds = np.argmax(probs, axis=1)
+    # prob for class 1
+    if 1 in classes:
+        prob1 = probs[:, classes.index(1)]
+    else:
+        # fallback: if labels are 0/1 but 1 not present, return zeros
+        prob1 = np.zeros(m)
+    return preds.astype(int), prob1
+
+# ---------------- Utility: single-point predict ----------------
+def predict_point_from_model(model_params, lon, lat):
+    """
+    Given model params (dict) and a single lon,lat, return (pred, prob1)
+    """
+    Xq = np.array([lon, lat], dtype=float).reshape(1, -1)
+    pred, prob1 = predict_qda_params(model_params, Xq)
+    return int(pred[0]), float(prob1[0])
+
+# ---------------- Main: load, train, evaluate, interactive ----------------
+def main():
+    # Load dataset
+    try:
+        df = pd.read_csv(DATA_PATH)
+    except Exception as e:
+        print("無法讀取資料檔案:", DATA_PATH)
+        print("錯誤:", e)
+        sys.exit(1)
+    if df.shape[1] < 3:
+        print("資料欄位太少，需至少 3 欄 (lon, lat, label)。")
+        sys.exit(1)
+    print("Loaded data shape:", df.shape)
+    # Use first two columns as lon/lat and last column as label
+    feature_cols = [df.columns[0], df.columns[1]]
+    label_col = df.columns[-1]
+    X = df[feature_cols].values.astype(float)
+    y = df[label_col].values
+    # Map labels to 0/1 if needed
+    uniq = np.unique(y)
+    if set(uniq) != {0,1}:
+        if len(uniq) == 2:
+            mapping = {uniq[0]:0, uniq[1]:1}
+            y = np.vectorize(mapping.get)(y)
+            print("Label mapped using:", mapping)
+        else:
+            print("標籤非二元 (binary). Found:", uniq)
+            sys.exit(1)
+    # Split
+    X_train, X_test, y_train, y_test = train_test_split(X, y,
+                                                        test_size=TEST_SIZE,
+                                                        random_state=RANDOM_STATE,
+                                                        stratify=y)
+    # Train QDA
+    params = train_qda(X_train, y_train)
+    # Evaluate
+    y_pred, prob1 = predict_qda_params(params, X_test)
+    acc = accuracy_score(y_test, y_pred)
+    cm = confusion_matrix(y_test, y_pred)
+    report = classification_report(y_test, y_pred, digits=4)
+    print("\n=== QDA Evaluation (使用前兩欄: lon, lat) ===")
+    print("Train size:", X_train.shape, "Test size:", X_test.shape)
+    print("Test accuracy: {:.4f}".format(acc))
+    print("Confusion matrix:\n", cm)
+    print("Classification report:\n", report)
+    # Save model params
+    with open(MODEL_PATH, "wb") as f:
+        pickle.dump({'params': params, 'feature_cols': feature_cols}, f)
+    print("Saved model to:", MODEL_PATH)
+
+    # Interactive prompt
+    print("\n已完成訓練。進入互動模式：")
+    print("輸入經度 與 緯度（空白分隔），或輸入 'q' 離開。")
+    while True:
+        try:
+            s = input("lon lat > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n結束。")
+            break
+        if not s:
+            continue
+        if s.lower() in ('q','quit','exit'):
+            print("結束。")
+            break
+        parts = s.split()
+        if len(parts) < 2:
+            print("請輸入兩個數字：lon lat")
+            continue
+        try:
+            lon = float(parts[0])
+            lat = float(parts[1])
+        except ValueError:
+            print("輸入解析失敗，請輸入數字，例如：120.5 23.0")
+            continue
+        pred, p1 = predict_point_from_model(params, lon, lat)
+        print(f"預測結果: class = {pred}    P(y=1) = {p1:.4f}")
+    # end interactive
+
+if __name__ == "__main__":
+    # Lazy import for train_test_split and metrics
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+    main()
