@@ -1,0 +1,119 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import platform
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import accuracy_score, classification_report
+
+# ======================================
+# (1) 自動設定中文字型
+# ======================================
+def set_chinese_font():
+    system = platform.system()
+    if system == "Windows":
+        plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei"]
+    elif system == "Darwin":  # macOS
+        plt.rcParams["font.sans-serif"] = ["PingFang TC"]
+    else:  # Linux
+        plt.rcParams["font.sans-serif"] = ["Noto Sans CJK TC"]
+    plt.rcParams["axes.unicode_minus"] = False
+
+set_chinese_font()
+
+# ======================================
+# (2) 載入資料
+# ======================================
+df_class = pd.read_csv("classification_dataset.csv")
+df_reg = pd.read_csv("regression_dataset.csv")
+
+# 分類資料
+X_class = df_class[["Longitude", "Latitude"]]
+y_class = df_class["Label"]
+
+# 回歸資料
+X_reg = df_reg[["Longitude", "Latitude"]]
+y_reg = df_reg["Value"]
+
+# ======================================
+# (3) 模型訓練
+# ======================================
+# 分割訓練/測試集
+X_train_c, X_test_c, y_train_c, y_test_c = train_test_split(X_class, y_class, test_size=0.2, random_state=42)
+X_train_r, X_test_r, y_train_r, y_test_r = train_test_split(X_reg, y_reg, test_size=0.2, random_state=42)
+
+# 建立模型
+clf = RandomForestClassifier(n_estimators=100, random_state=42)
+reg = RandomForestRegressor(n_estimators=100, random_state=42)
+
+# 訓練模型
+clf.fit(X_train_c, y_train_c)
+reg.fit(X_train_r, y_train_r)
+
+# 評估分類模型
+y_pred_c = clf.predict(X_test_c)
+print("分類模型準確率:", accuracy_score(y_test_c, y_pred_c))
+print("分類模型報告:\n", classification_report(y_test_c, y_pred_c))
+
+# ======================================
+# (4) 定義組合模型 h(x)
+# ======================================
+def h_model(X):
+    """分段平滑函數模型 h(x)"""
+    c_pred = clf.predict(X)
+    r_pred = reg.predict(X)
+    result = np.where(c_pred == 1, r_pred, -999)
+    return result
+
+# ======================================
+# (5) 模型運作驗證
+# ======================================
+# 對整個分類資料集進行預測
+X_all = df_class[["Longitude", "Latitude"]]
+c_all = clf.predict(X_all)
+r_all = reg.predict(X_all)
+h_all = h_model(X_all)
+
+# 整合結果成表格
+df_combined = X_all.copy()
+df_combined["C(x)"] = c_all
+df_combined["R(x)"] = r_all
+df_combined["h(x)"] = h_all
+
+# 檢查前幾筆輸出
+print("\n=== 組合模型 h(x) 輸出示例 ===")
+print(df_combined.head(10))
+
+# 統計結果
+n_total = len(df_combined)
+n_invalid = (df_combined["h(x)"] == -999).sum()
+n_valid = n_total - n_invalid
+print(f"\n總筆數: {n_total}")
+print(f"有效預測 (C=1): {n_valid} 筆 ({n_valid/n_total:.2%})")
+print(f"無效預測 (C=0): {n_invalid} 筆 ({n_invalid/n_total:.2%})")
+
+# ======================================
+# (6) 模型行為視覺化
+# ======================================
+plt.figure(figsize=(6,6))
+sc = plt.scatter(df_combined["Longitude"], df_combined["Latitude"],
+                 c=df_combined["h(x)"], cmap="turbo", s=5)
+plt.colorbar(sc, label="h(x) 預測值 (°C 或 -999)")
+plt.title("組合模型 h(x) 的空間分布", fontsize=14, pad=15)
+plt.xlabel("經度")
+plt.ylabel("緯度")
+plt.show()
+
+# 額外：顯示分段效果對照圖
+plt.figure(figsize=(10,4))
+plt.subplot(1,2,1)
+plt.scatter(df_combined["Longitude"], df_combined["Latitude"], c=df_combined["C(x)"], cmap="coolwarm", s=5)
+plt.title("分類模型 C(x) 結果 (0=無效, 1=有效)")
+plt.xlabel("經度"); plt.ylabel("緯度")
+
+plt.subplot(1,2,2)
+plt.scatter(df_combined["Longitude"], df_combined["Latitude"], c=df_combined["h(x)"], cmap="turbo", s=5)
+plt.title("組合模型 h(x) 結果")
+plt.xlabel("經度"); plt.ylabel("緯度")
+plt.tight_layout()
+plt.show()
