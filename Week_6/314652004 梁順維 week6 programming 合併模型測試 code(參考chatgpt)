@@ -1,0 +1,148 @@
+"""
+h_model_server.py
+可操作範例：輸入經緯度得到 h(x) 預測結果
+依賴: pandas, numpy, scikit-learn, joblib, matplotlib (若要畫圖)
+pip 安裝: pip install pandas numpy scikit-learn joblib matplotlib
+"""
+
+import os
+import platform
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.utils import resample
+import joblib
+
+# ---------------------------
+# 配置（可修改）
+# ---------------------------
+CLASS_CSV = "classification_dataset.csv"
+REG_CSV = "regression_dataset.csv"
+CLF_MODEL_FILE = "classification_model.pkl"
+REG_MODEL_FILE = "regression_model.pkl"
+RANDOM_STATE = 42
+
+# ---------------------------
+# 可選：自動設定中文字型（若會畫圖）- 保留但非必要
+# ---------------------------
+def set_chinese_font_for_matplotlib():
+    import matplotlib.pyplot as plt
+    system = platform.system()
+    if system == "Windows":
+        plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei"]
+    elif system == "Darwin":
+        plt.rcParams["font.sans-serif"] = ["PingFang TC"]
+    else:
+        plt.rcParams["font.sans-serif"] = ["Noto Sans CJK TC"]
+    plt.rcParams["axes.unicode_minus"] = False
+
+# ---------------------------
+# 載入或訓練模型
+# ---------------------------
+def load_or_train_models(force_retrain=False, verbose=True):
+    """
+    若已存在 model 檔案，會直接載入。否則讀 CSV 並訓練（含自動平衡分類資料）。
+    回傳：clf, reg （已訓練的模型）
+    """
+    # 若檔案存在且不強制重訓，直接載入
+    if not force_retrain and os.path.exists(CLF_MODEL_FILE) and os.path.exists(REG_MODEL_FILE):
+        if verbose: print("載入已儲存的模型...")
+        clf = joblib.load(CLF_MODEL_FILE)
+        reg = joblib.load(REG_MODEL_FILE)
+        return clf, reg
+
+    # 否則從 CSV 讀資料並訓練
+    if not os.path.exists(CLASS_CSV) or not os.path.exists(REG_CSV):
+        raise FileNotFoundError(f"找不到資料檔 {CLASS_CSV} 或 {REG_CSV}。請先產生 classification/regression csv。")
+
+    # 讀取資料
+    df_class = pd.read_csv(CLASS_CSV)
+    df_reg = pd.read_csv(REG_CSV)
+
+    # 檢查 Label 分佈並自動平衡（上採樣少數類別）
+    count_0 = (df_class["Label"] == 0).sum()
+    count_1 = (df_class["Label"] == 1).sum()
+    if verbose:
+        print(f"分類資料原始分佈：0={count_0}, 1={count_1}")
+    if count_1 == 0:
+        raise ValueError("資料中沒有 Label=1 （有效樣本）。請確認來源資料。")
+    # 若高度不平衡 (差異超過 10%)，上採樣少數類別
+    if abs(count_0 - count_1) / max(count_0, count_1) > 0.1:
+        if verbose: print("類別不平衡，執行上採樣（少數類別）...")
+        df_major = df_class[df_class["Label"] == 0]
+        df_minor = df_class[df_class["Label"] == 1]
+        df_minor_upsampled = resample(df_minor, replace=True, n_samples=len(df_major), random_state=RANDOM_STATE)
+        df_class = pd.concat([df_major, df_minor_upsampled]).sample(frac=1, random_state=RANDOM_STATE)  # 洗牌
+        if verbose: print("平衡後分佈：", df_class["Label"].value_counts().to_dict())
+
+    # 特徵與標籤
+    X_class = df_class[["Longitude", "Latitude"]].values
+    y_class = df_class["Label"].values
+    X_reg = df_reg[["Longitude", "Latitude"]].values
+    y_reg = df_reg["Value"].values
+
+    # 分割（可視需要調整）
+    X_train_c, X_test_c, y_train_c, y_test_c = train_test_split(X_class, y_class, test_size=0.2, random_state=RANDOM_STATE)
+    X_train_r, X_test_r, y_train_r, y_test_r = train_test_split(X_reg, y_reg, test_size=0.2, random_state=RANDOM_STATE)
+
+    # 建模 （分類加上 class_weight='balanced'）
+    clf = RandomForestClassifier(n_estimators=150, class_weight='balanced', random_state=RANDOM_STATE)
+    reg = RandomForestRegressor(n_estimators=100, random_state=RANDOM_STATE)
+
+    if verbose: print("訓練分類模型...")
+    clf.fit(X_train_c, y_train_c)
+    if verbose:
+        train_acc = clf.score(X_test_c, y_test_c)
+        print(f"分類模型測試集準確率: {train_acc:.4f}")
+
+    if verbose: print("訓練回歸模型...")
+    reg.fit(X_train_r, y_train_r)
+    if verbose:
+        from sklearn.metrics import r2_score
+        r2 = r2_score(y_test_r, reg.predict(X_test_r))
+        print(f"回歸模型測試集 R^2: {r2:.4f}")
+
+    # 儲存模型
+    joblib.dump(clf, CLF_MODEL_FILE)
+    joblib.dump(reg, REG_MODEL_FILE)
+    if verbose: print(f"模型已儲存為 {CLF_MODEL_FILE} 和 {REG_MODEL_FILE}")
+
+    return clf, reg
+
+# 立刻載入或訓練（執行時會產生模型）
+clf, reg = load_or_train_models()
+
+# ---------------------------
+# 定義可呼叫的預測介面
+# ---------------------------
+def predict_batch(lon_lat_array):
+    """
+    輸入: shape=(N,2) 或 list of tuples [(lon,lat),...]
+    回傳: numpy array shape (N,)，為 h(x) 的值（若分類為0則為 -999）
+    """
+    arr = np.array(lon_lat_array, dtype=float).reshape(-1,2)
+    c_pred = clf.predict(arr)
+    r_pred = reg.predict(arr)
+    h = np.where(c_pred == 1, r_pred, -999.0)
+    return h
+
+def predict_point(lon, lat):
+    """單點預測介面，回傳一個標量"""
+    return float(predict_batch([[lon, lat]])[0])
+
+# ---------------------------
+# 範例使用
+# ---------------------------
+if __name__ == "__main__":
+    # 測試單點
+    example_lon = 120.5
+    example_lat = 23.0
+    print("範例輸入:", example_lon, example_lat)
+    print("h(x) 預測結果:", predict_point(example_lon, example_lat))
+
+    # 測試多點
+    pts = [(120.72, 21.97), (121.0, 24.0), (120.5, 23.0)]
+    res = predict_batch(pts)
+    print("批次輸入:", pts)
+    print("批次輸出:", res)
