@@ -1,0 +1,156 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+
+# ---------- Config ----------
+DATA_PATH = "./classification_dataset.csv"
+OUTPUT_PLOT = "qda_decision_boundary.png"
+TEST_SIZE = 0.2
+RANDOM_STATE = 42
+
+# ---------- Load data ----------
+df = pd.read_csv(DATA_PATH)
+print("Loaded dataset shape:", df.shape)
+print("Columns:", df.columns.tolist())
+
+# Assume the last column is the binary label (0/1).
+label_col = df.columns[-1]
+# Use only the first two columns as features (longitude, latitude)
+feature_cols = [df.columns[0], df.columns[1]]
+print("Using features:", feature_cols, "and label:", label_col)
+
+X = df[feature_cols].values   # only lon, lat
+y = df[label_col].values
+
+# Ensure binary labels 0/1; if not, map the two unique values to 0/1
+unique_vals = np.unique(y)
+if set(unique_vals) != {0,1}:
+    if len(unique_vals) == 2:
+        mapping = {unique_vals[0]: 0, unique_vals[1]: 1}
+        y = np.vectorize(mapping.get)(y)
+        print("Mapped labels:", mapping)
+    else:
+        raise ValueError("Label column must be binary (two unique values). Found: " + str(unique_vals))
+
+# ---------- Train/test split ----------
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
+)
+print("Train shape:", X_train.shape, "Test shape:", X_test.shape)
+
+# ---------- QDA implementation ----------
+def train_qda(X, y):
+    """
+    Estimate per-class mean, covariance, and prior.
+    Returns params dict: {class: {'phi', 'mu', 'sigma'}}
+    """
+    n = X.shape[0]
+    classes = np.unique(y)
+    params = {}
+    for c in classes:
+        Xc = X[y == c]
+        phi = Xc.shape[0] / n
+        mu = Xc.mean(axis=0)
+        # Use MLE class covariance (divide by n_k)
+        sigma = np.zeros((X.shape[1], X.shape[1]))
+        for i in range(Xc.shape[0]):
+            diff = (Xc[i] - mu).reshape(-1,1)
+            sigma += diff.dot(diff.T)
+        sigma /= Xc.shape[0]
+        # safe inverse (pinv if singular)
+        try:
+            inv_sigma = np.linalg.inv(sigma)
+        except np.linalg.LinAlgError:
+            inv_sigma = np.linalg.pinv(sigma)
+        params[c] = {'phi': phi, 'mu': mu, 'sigma': sigma, 'inv_sigma': inv_sigma}
+    return params
+
+def predict_qda(params, X):
+    """
+    Return (preds, prob_for_class1)
+    Compute log p(x|y=k) + log p(y=k) and normalize.
+    """
+    n = X.shape[0]
+    classes = sorted(params.keys())
+    K = len(classes)
+    scores = np.zeros((n, K))
+    for idx, c in enumerate(classes):
+        phi = params[c]['phi']
+        mu = params[c]['mu']
+        sigma = params[c]['sigma']
+        inv_sigma = params[c]['inv_sigma']
+        # robust logdet
+        sign, logdet = np.linalg.slogdet(sigma)
+        if sign <= 0:
+            eig = np.linalg.eigvalsh(sigma)
+            eig_clipped = np.clip(eig, 1e-12, None)
+            logdet = np.sum(np.log(eig_clipped))
+        # compute -0.5*(x-mu)^T Sigma^{-1} (x-mu) - 0.5 log|Sigma| + log(phi)
+        diffs = X - mu
+        quad = np.sum((diffs.dot(inv_sigma)) * diffs, axis=1)  # shape (n,)
+        scores[:, idx] = -0.5 * quad - 0.5 * logdet + np.log(phi)
+    # convert scores to probabilities in numerically stable way
+    maxs = np.max(scores, axis=1, keepdims=True)
+    exps = np.exp(scores - maxs)
+    probs = exps / np.sum(exps, axis=1, keepdims=True)  # shape (n,K)
+    preds = np.argmax(probs, axis=1)
+    # probability for class '1' (assume classes are 0 and 1)
+    idx1 = classes.index(1) if 1 in classes else -1
+    prob1 = probs[:, idx1] if idx1 >= 0 else probs[:, 0]
+    return preds, prob1
+
+# ---------- Train ----------
+qda_params = train_qda(X_train, y_train)
+
+# ---------- Evaluate on test set ----------
+y_pred, y_prob = predict_qda(qda_params, X_test)
+acc = accuracy_score(y_test, y_pred)
+cm = confusion_matrix(y_test, y_pred)
+report = classification_report(y_test, y_pred, digits=4)
+
+print("\n=== Evaluation on test set (80/20 split, stratified) ===")
+print("Test accuracy: {:.4f}".format(acc))
+print("Confusion matrix:\n", cm)
+print("\nClassification report:\n", report)
+
+# ---------- Plot decision boundary (2D: longitude vs latitude) ----------
+# Create dense grid and compute class probability for class=1
+padding = 0.02  # small padding relative to range
+x_min, x_max = X[:,0].min(), X[:,0].max()
+y_min, y_max = X[:,1].min(), X[:,1].max()
+x_range = x_max - x_min
+y_range = y_max - y_min
+x_min -= 0.05 * x_range; x_max += 0.05 * x_range
+y_min -= 0.05 * y_range; y_max += 0.05 * y_range
+
+xx, yy = np.meshgrid(np.linspace(x_min, x_max, 400),
+                     np.linspace(y_min, y_max, 400))
+grid = np.c_[xx.ravel(), yy.ravel()]
+_, grid_prob1 = predict_qda(qda_params, grid)
+grid_prob1 = grid_prob1.reshape(xx.shape)
+
+plt.figure(figsize=(8,6))
+# filled contour of probability for class 1
+contf = plt.contourf(xx, yy, grid_prob1, levels=30, alpha=0.25, cmap='RdBu')
+# decision boundary contour at probability 0.5
+cont = plt.contour(xx, yy, grid_prob1, levels=[0.5], colors='k', linewidths=2)
+plt.clabel(cont, fmt="decision boundary (p=0.5)")
+
+# scatter training points (optional: show test as well)
+plt.scatter(X_train[y_train==0,0], X_train[y_train==0,1], s=10, label='train class 0', marker='o', edgecolor='k')
+plt.scatter(X_train[y_train==1,0], X_train[y_train==1,1], s=10, label='train class 1', marker='s', edgecolor='k')
+plt.scatter(X_test[y_test==0,0], X_test[y_test==0,1], s=30, facecolors='none', edgecolor='k', label='test class 0')
+plt.scatter(X_test[y_test==1,0], X_test[y_test==1,1], s=30, facecolors='none', edgecolor='r', label='test class 1')
+
+plt.xlabel(feature_cols[0])
+plt.ylabel(feature_cols[1])
+plt.title(f"QDA decision boundary (test accuracy={acc:.4f})")
+plt.legend(loc='best')
+plt.colorbar(contf, label='P(y=1)')
+plt.tight_layout()
+plt.savefig(OUTPUT_PLOT, dpi=300)
+print("Saved decision-boundary plot to:", OUTPUT_PLOT)
+plt.show()
+
