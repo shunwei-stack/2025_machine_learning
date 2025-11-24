@@ -1,0 +1,110 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Define the Runge function
+def runge_function(x):
+    return 1 / (1 + 25 * x**2)
+
+# Define derivative of Runge function
+def runge_derivative(x):
+    return (-50 * x) / (1 + 25 * x**2)**2
+
+# Generate training and validation data
+x_train = np.linspace(-1, 1, 200).reshape(-1, 1)
+y_train = runge_function(x_train)
+
+x_val = np.linspace(-1, 1, 100).reshape(-1, 1)
+y_val = runge_function(x_val)
+
+x_train_tensor = torch.tensor(x_train, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+x_val_tensor = torch.tensor(x_val, dtype=torch.float32)
+y_val_tensor = torch.tensor(y_val, dtype=torch.float32)
+
+# Define a simple feedforward neural network
+class RungeNet(nn.Module):
+    def __init__(self):
+        super(RungeNet, self).__init__()
+        self.model = nn.Sequential(
+            nn.Linear(1, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1)
+        )
+
+    def forward(self, x):
+        return self.model(x)
+
+# Initialize network, loss, optimizer
+net = RungeNet()
+criterion = nn.MSELoss()
+optimizer = optim.Adam(net.parameters(), lr=0.01)
+
+# Training loop
+train_losses = []
+val_losses = []
+
+for epoch in range(2000):
+    optimizer.zero_grad()
+    output = net(x_train_tensor)
+    loss = criterion(output, y_train_tensor)
+    loss.backward()
+    optimizer.step()
+
+    # Validation loss
+    with torch.no_grad():
+        val_output = net(x_val_tensor)
+        val_loss = criterion(val_output, y_val_tensor)
+
+    train_losses.append(loss.item())
+    val_losses.append(val_loss.item())
+
+    if epoch % 200 == 0:
+        print(f"Epoch {epoch}, Train Loss: {loss.item():.6f}, Val Loss: {val_loss.item():.6f}")
+
+# Evaluate network on derivative
+x_test = np.linspace(-1, 1, 500).reshape(-1, 1)
+y_test = runge_function(x_test)
+y_test_derivative = runge_derivative(x_test)
+
+x_test_tensor = torch.tensor(x_test, dtype=torch.float32, requires_grad=True)
+
+# Forward pass
+y_pred = net(x_test_tensor)
+
+# Compute derivative using autograd
+dy_dx = torch.autograd.grad(
+    outputs=y_pred,
+    inputs=x_test_tensor,
+    grad_outputs=torch.ones_like(y_pred),
+    create_graph=False
+)[0].detach().numpy()
+
+# Compute derivative errors
+mse_derivative = np.mean((dy_dx - y_test_derivative)**2)
+max_error_derivative = np.max(np.abs(dy_dx - y_test_derivative))
+
+print(f"Derivative Test MSE: {mse_derivative:.6e}")
+print(f"Derivative Test Max Error: {max_error_derivative:.6e}")
+
+# Plot derivative comparison
+plt.figure(figsize=(8,5))
+plt.plot(x_test, y_test_derivative, label="True Derivative", color="blue")
+plt.plot(x_test, dy_dx, label="NN Derivative Approximation", color="red", linestyle="--")
+plt.title("Derivative Approximation of Runge Function")
+plt.legend()
+plt.show()
+
+# Plot training and validation loss curves
+plt.figure(figsize=(8,5))
+plt.plot(train_losses, label="Training Loss")
+plt.plot(val_losses, label="Validation Loss")
+plt.xlabel("Epoch")
+plt.ylabel("MSE Loss")
+plt.title("Training and Validation Loss Curves")
+plt.legend()
+plt.show()
